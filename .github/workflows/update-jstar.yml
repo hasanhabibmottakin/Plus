@@ -1,8 +1,8 @@
-name: 🔁 Auto Update Jiostar M3U
+name:  Auto Update Jiostar M3U (PHP)
 
 on:
   schedule:
-    - cron: "0 */2 * * *"   
+    - cron: "0 */2 * * *"  
   workflow_dispatch:
 
 permissions:
@@ -16,70 +16,100 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
         with:
-          python-version: "3.x"
+          php-version: '8.2'
 
-      - name: Install dependencies
-        run: pip install requests
-
-      - name: Fetch and convert M3U
+      - name: Run PHP script
         env:
           M3U_URL: ${{ secrets.M3U_URL }}
         run: |
-          import re, json, requests
+          php <<'PHP'
+          <?php
+          error_reporting(E_ALL);
+          ini_set('display_errors', 1);
 
-          url = "${{ secrets.M3U_URL }}"
-          r = requests.get(url)
-          data = r.text.strip().splitlines()
+          $url = getenv('M3U_URL');
+          $data = @file_get_contents($url);
 
-          channels = []
-          cookies = []
+          if (!$data) {
+              echo "Failed to fetch M3U file.";
+              exit(1);
+          }
 
-          current = {}
-          for line in data:
-              if line.startswith("#EXTINF"):
-                  name = re.search(r',(.+)', line)
-                  logo = re.search(r'tvg-logo="([^"]+)"', line)
-                  group = re.search(r'group-title="([^"]+)"', line)
-                  tvgid = re.search(r'tvg-id="([^"]+)"', line)
-                  current = {
-                      "name": name.group(1) if name else "",
-                      "logo": logo.group(1) if logo else "",
-                      "group": group.group(1) if group else "",
-                      "tvg_id": tvgid.group(1) if tvgid else "",
-                      "url": ""
+          $lines = explode("\n", trim($data));
+          $channels = [];
+          $cookies = [];
+          $current = [];
+
+          foreach ($lines as $line) {
+              $line = trim($line);
+
+              if (strpos($line, '#EXTINF') === 0) {
+                  preg_match('/tvg-id="([^"]*)"/', $line, $id);
+                  preg_match('/group-title="([^"]*)"/', $line, $group);
+                  preg_match('/tvg-logo="([^"]*)"/', $line, $logo);
+                  preg_match('/,(.*)$/', $line, $name);
+                  $current = [
+                      'tvg_id' => $id[1] ?? '',
+                      'group'  => $group[1] ?? '',
+                      'logo'   => $logo[1] ?? '',
+                      'name'   => $name[1] ?? '',
+                      'url'    => '',
+                      'cookie' => '',
+                      'license_key' => ''
+                  ];
+              }
+
+              elseif (strpos($line, '#KODIPROP:inputstream.adaptive.license_key=') === 0) {
+                  $license = trim(str_replace('#KODIPROP:inputstream.adaptive.license_key=', '', $line));
+                  $current['license_key'] = $license;
+              }
+
+              elseif (strpos($line, '#EXTHTTP:') === 0) {
+                  if (preg_match('/"cookie":"([^"]+)"/', $line, $cookieMatch)) {
+                      $cookie = $cookieMatch[1];
+                      $current['cookie'] = $cookie;
+                      $cookies[] = [
+                          'name' => $current['name'] ?? '',
+                          'cookie' => $cookie
+                      ];
                   }
-              elif line.startswith("#EXTHTTP:"):
-                  cookie = re.search(r'"cookie":"([^"]+)"', line)
-                  if cookie:
-                      current["cookie"] = cookie.group(1)
-                      cookies.append({"name": current.get("name"), "cookie": cookie.group(1)})
-              elif line.startswith("http"):
-                  current["url"] = line.strip()
-                  if current:
-                      channels.append(current)
-                      current = {}
+              }
 
-          # Save JSON output
-          with open("channels.json", "w") as f:
-              json.dump(channels, f, indent=2)
+              elseif (preg_match('/^https?:\/\//', $line)) {
+                  $current['url'] = $line;
+                  if (!empty($current['name'])) {
+                      $channels[] = $current;
+                  }
+                  $current = [];
+              }
+          }
 
-          with open("cookie.json", "w") as f:
-              json.dump(cookies, f, indent=2)
+     
+          file_put_contents('channels.json', json_encode($channels, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
-          # Save filtered M3U
-          m3u_output = ["#EXTM3U x-tvg-url=\"https://avkb.short.gy/jioepg.xml.gz\""]
-          for c in channels:
-              m3u_output.append(f'#EXTINF:-1 tvg-id="{c["tvg_id"]}" group-title="{c["group"]}" tvg-logo="{c["logo"]}",{c["name"]}')
-              m3u_output.append(c["url"])
-          open("channels.m3u", "w").write("\n".join(m3u_output))
+  
+          file_put_contents('cookie.json', json_encode($cookies, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
-      - name: Commit & push changes
+        
+          $m3u = '#EXTM3U x-tvg-url="https://avkb.short.gy/jioepg.xml.gz"' . "\n";
+          foreach ($channels as $c) {
+              $m3u .= sprintf('#EXTINF:-1 tvg-id="%s" group-title="%s" tvg-logo="%s",%s', 
+                  $c['tvg_id'], $c['group'], $c['logo'], $c['name']
+              ) . "\n";
+              $m3u .= $c['url'] . "\n";
+          }
+          file_put_contents('channels.m3u', $m3u);
+
+          echo " Files generated successfully.\n";
+          PHP
+
+      - name: Commit and push changes
         run: |
-          git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
           git add channels.json cookie.json channels.m3u
-          git commit -m "🔄 Auto updated Jiostar M3U data"
+          git commit -m "🔄 Auto updated Jiostar M3U data" || echo "No changes to commit"
           git push
