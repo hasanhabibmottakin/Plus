@@ -1,4 +1,4 @@
-name:  Auto Update Jiostar M3U (PHP)
+name:  Auto Update Jiostar M3U 
 
 on:
   schedule:
@@ -52,13 +52,12 @@ jobs:
                   preg_match('/tvg-logo="([^"]*)"/', $line, $logo);
                   preg_match('/,(.*)$/', $line, $name);
                   $current = [
-                      'tvg_id' => $id[1] ?? '',
-                      'group'  => $group[1] ?? '',
-                      'logo'   => $logo[1] ?? '',
+                      'id' => $id[1] ?? '',
                       'name'   => $name[1] ?? '',
-                      'url'    => '',
+                      'mpd'    => '',
                       'cookie' => '',
-                      'license_key' => ''
+                      'logo'   => $logo[1] ?? '',
+                      'license_key' => '' 
                   ];
               }
 
